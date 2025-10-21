@@ -3,302 +3,207 @@ import pandas as pd
 from datetime import datetime
 import plotly.express as px
 
-# ==========================================================
-# 🎯 Streamlit Page Configuration
-# ==========================================================
+# ================================================================
+# 🏦 Streamlit App Config
+# ================================================================
 st.set_page_config(page_title="Zenith Bank Dashboard", layout="wide")
-
 st.title("🏦 Zenith Bank Dashboard")
-st.markdown("#### Customer Spend & Transaction Insights")
+st.markdown("### Customer Spend & Transaction Insights")
+
+# ================================================================
+# 🗂 Page Navigation on Main Page
+# ================================================================
+st.markdown("---")
+page = st.radio("Select Page", [
+    "📊 KPIs",
+    "🧍 Spend by Gender",
+    " Spend by Age Group",
+    " Spend by Marital Status",
+    "💳 Transactions by Payment Type",
+    "💼 Total Spend by Occupation",
+    "🏷️ Total Spend by Category",
+    "🏆 Top 10 Spending Customers"
+], index=0, horizontal=True)
 st.markdown("---")
 
-# ==========================================================
-# 📥 Load and Prepare Data
-# ==========================================================
+# ================================================================
+# 📥 Load Data
+# ================================================================
 @st.cache_data
 def load_data():
     customers = pd.read_csv("dim_customers.csv")
     spends = pd.read_csv("fact_spends.csv")
 
     # Clean column names
-    customers.columns = customers.columns.str.lower().str.strip()
-    spends.columns = spends.columns.str.lower().str.strip()
+    customers.columns = (
+        customers.columns.str.lower()
+        .str.strip()
+        .str.replace(" ", "_")
+        .str.replace(r"[^a-z0-9_]", "", regex=True)
+    )
+    spends.columns = (
+        spends.columns.str.lower()
+        .str.strip()
+        .str.replace(" ", "_")
+        .str.replace(r"[^a-z0-9_]", "", regex=True)
+    )
 
-    # Identify transaction column (if exists)
-    possible_txn_cols = ["transaction_id", "txn_id", "trans_id", "spend_id"]
-    txn_col = next((col for col in possible_txn_cols if col in spends.columns), None)
-
-    # Create synthetic transaction id if missing
-    if not txn_col:
-        spends["transaction_id"] = range(1, len(spends) + 1)
-        txn_col = "transaction_id"
-
-    # Merge datasets
+    # Merge on customer_id
     df = pd.merge(spends, customers, on="customer_id", how="left")
 
-    # Handle age or age_group
+    # Fix marital_status column
+    for col in df.columns:
+        if "marital" in col.lower():
+            df.rename(columns={col: "marital_status"}, inplace=True)
+            break
+
+    # Handle DOB → Age
     if "dob" in df.columns:
         df["dob"] = pd.to_datetime(df["dob"], errors="coerce")
         df["age"] = datetime.now().year - df["dob"].dt.year
     elif "age_group" in df.columns:
-        age_map = {
-            "21-24": 22,
-            "25-34": 29,
-            "35-44": 39,
-            "45+": 50
-        }
-        df["age"] = df["age_group"].map(age_map)
-    else:
+        mapping = {"21-24": 22, "25-34": 29, "35-44": 39, "45+": 50}
+        df["age"] = df["age_group"].map(mapping)
+    elif "age" not in df.columns:
         df["age"] = None
 
-    return df, txn_col
+    # Create Age Groups
+    bins = [0, 20, 24, 34, 44, 54, 64, 100]
+    labels = ["<20", "21-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+    df["age_group"] = pd.cut(df["age"], bins=bins, labels=labels, right=True)
 
-df, txn_col = load_data()
+    # Ensure 'spend' is numeric
+    df["spend"] = pd.to_numeric(df["spend"], errors="coerce").fillna(0)
 
-# ==========================================================
+    return df
+
+df = load_data()
+
+# ================================================================
 # 🧭 Sidebar Filters
-# ==========================================================
+# ================================================================
 st.sidebar.header("🔍 Filters")
 
-# --- 🏙️ City Filter (with Average Spend) ---
+# City Filter
 if "city" in df.columns:
-    city_avg = (
-        df.groupby("city")["spend"]
-        .mean()
-        .reset_index()
-        .sort_values("spend", ascending=False)
-    )
-    city_avg["label"] = city_avg["city"] + " ($" + city_avg["spend"].round(2).astype(str) + ")"
-
-    selected_city_labels = st.sidebar.multiselect(
-        "Select City (Average Spend shown)",
-        options=city_avg["label"].tolist(),
-        default=city_avg["label"].tolist(),
-        key="city_multiselect"
-    )
-
-    selected_cities = city_avg[city_avg["label"].isin(selected_city_labels)]["city"].tolist()
+    cities = sorted(df["city"].dropna().unique())
+    selected_cities = st.sidebar.multiselect("Select City", cities, default=cities)
     df = df[df["city"].isin(selected_cities)]
 
-# --- 👔 Occupation Filter ---
-df = df.dropna(subset=["occupation"])
-occupations = sorted(df["occupation"].unique())
-selected_occupations = st.sidebar.multiselect(
-    "Select Occupation(s)",
-    occupations,
-    default=occupations,
-    key="occupation_multiselect"
-)
+# Occupation Filter
+if "occupation" in df.columns:
+    occupations = sorted(df["occupation"].dropna().unique())
+    selected_occupations = st.sidebar.multiselect("Select Occupation", occupations, default=occupations)
+    df = df[df["occupation"].isin(selected_occupations)]
 
-# --- 🎂 Age Filter ---
-if df["age"].notnull().any():
-    min_age, max_age = int(df["age"].min()), int(df["age"].max())
-    selected_age = st.sidebar.slider(
-        "Select Age Range", min_value=min_age, max_value=max_age, value=(min_age, max_age), key="age_slider"
-    )
-else:
-    selected_age = (None, None)
-
-# --- 🛍️ Category Filter ---
+# Category Filter
 if "category" in df.columns:
     categories = sorted(df["category"].dropna().unique())
-    selected_categories = st.sidebar.multiselect(
-        "Select Spending Category(s)", categories, default=categories, key="category_multiselect"
-    )
-else:
-    selected_categories = None
+    selected_categories = st.sidebar.multiselect("Select Category", categories, default=categories)
+    df = df[df["category"].isin(selected_categories)]
 
-# ==========================================================
-# 🔄 Apply Filters
-# ==========================================================
-df_filtered = df[df["occupation"].isin(selected_occupations)]
-if selected_age != (None, None):
-    df_filtered = df_filtered[df_filtered["age"].between(selected_age[0], selected_age[1])]
-if selected_categories is not None:
-    df_filtered = df_filtered[df_filtered["category"].isin(selected_categories)]
+# Age Filter
+if df["age"].notnull().any():
+    min_age, max_age = int(df["age"].min()), int(df["age"].max())
+    selected_age = st.sidebar.slider("Select Age Range", min_age, max_age, (min_age, max_age))
+    df = df[df["age"].between(selected_age[0], selected_age[1])]
 
-# ==========================================================
-# 📊 KPIs
-# ==========================================================
-st.subheader("📈 Key Performance Indicators")
-col1, col2, col3 = st.columns(3)
+# ================================================================
+# 💰 Currency Conversion USD → INR
+# ================================================================
+USD_TO_INR = 83  # Conversion rate
+df["spend_inr"] = df["spend"] * USD_TO_INR
 
-total_txns = df_filtered[txn_col].nunique()
-unique_customers = df_filtered["customer_id"].nunique()
-total_spend = df_filtered["spend"].sum()
+# ================================================================
+# 📊 Display Pages Based on Selection
+# ================================================================
+if page == "📊 KPIs":
+    st.subheader("📈 Key Performance Indicators")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Spend", f"₹{df['spend_inr'].sum():,.2f}")
+    col2.metric("Unique Customers", df["customer_id"].nunique())
+    col3.metric("Total Transactions", df.shape[0])
 
-col1.metric("Total Transactions", f"{total_txns:,}")
-col2.metric("Unique Customers", f"{unique_customers:,}")
-col3.metric("Total Spend", f"${total_spend:,.2f}")
+elif page == "🧍 Spend by Gender":
+    st.subheader("🧍 Spend Distribution by Gender")
+    if "gender" in df.columns:
+        gdf = df.groupby("gender")["spend_inr"].sum().reset_index()
+        fig_gender = px.pie(gdf, names="gender", values="spend_inr", hole=0.4, title="Spend by Gender (INR)")
+        st.plotly_chart(fig_gender, use_container_width=True)
 
-st.markdown("---")
-
-# ==========================================================
-# 🧍‍♂️🧍‍♀️ Spend Distribution by Gender
-# ==========================================================
-st.subheader("🧍 Spend Distribution by Gender")
-
-if "gender" in df_filtered.columns:
-    gender_spend = (
-        df_filtered.groupby("gender")["spend"]
-        .sum()
-        .reset_index()
-        .sort_values("spend", ascending=False)
-    )
-
-    fig_gender = px.pie(
-        gender_spend,
-        names="gender",
-        values="spend",
-        hole=0.4,
-        color_discrete_sequence=px.colors.qualitative.Set2,
-        title="🧍‍♂️🧍‍♀️ Total Spend by Gender"
-    )
-
-    fig_gender.update_traces(textinfo="label+percent", pull=[0.05, 0.05])
-    fig_gender.update_layout(title_x=0.3)
-
-    st.plotly_chart(fig_gender, use_container_width=True)
-else:
-    st.info("Gender information is not available in the dataset.")
-
-# ==========================================================
-# 💳 Transactions by Payment Type and Occupation
-# ==========================================================
-st.subheader("💳 Transactions by Payment Type and Occupation")
-if "payment_type" in df_filtered.columns:
-    tx_summary = (
-        df_filtered.groupby(["occupation", "payment_type"])
-        .agg(transaction_count=(txn_col, "count"), total_spend=("spend", "sum"))
-        .reset_index()
-    )
-    tx_summary = tx_summary.sort_values(["occupation", "transaction_count"], ascending=[True, False])
-
-    with st.expander("🔎 View Transaction Summary Data"):
-        st.dataframe(tx_summary)
-
-    fig_tx = px.bar(
-        tx_summary,
-        x="occupation",
-        y="transaction_count",
-        color="payment_type",
+elif page == " Spend by Age Group":
+    st.subheader("Spend by Age Group")
+    age_summary = df.groupby(["city", "occupation", "category", "marital_status", "age_group"])["spend_inr"].sum().reset_index()
+    fig_age = px.bar(
+        age_summary,
+        x="city",
+        y="spend_inr",
+        color="age_group",
         barmode="group",
-        text_auto=True,
-        title="💳 Transactions by Payment Type and Occupation"
+        facet_col="occupation",
+        facet_col_wrap=2,
+        title="Spend by Age Group (INR) across City, Occupation, Category & Marital Status"
     )
-    fig_tx.update_layout(
-        xaxis_title="Occupation",
-        yaxis_title="Transaction Count",
-        legend_title="Payment Type",
-        title_x=0.25
-    )
-    st.plotly_chart(fig_tx, use_container_width=True)
-
-# ==========================================================
-# 💼 Total Spend by Occupation
-# ==========================================================
-st.subheader("💼 Total Spend by Occupation")
-spend_occ = df_filtered.groupby("occupation")["spend"].sum().reset_index()
-fig_spend = px.bar(
-    spend_occ,
-    x="occupation",
-    y="spend",
-    text_auto=True,
-    title="💼 Total Spend by Occupation"
-)
-fig_spend.update_layout(xaxis_title="Occupation", yaxis_title="Total Spend")
-st.plotly_chart(fig_spend, use_container_width=True)
-
-# ==========================================================
-# 💰 Total Spend by Category
-# ==========================================================
-if "category" in df_filtered.columns:
-    st.subheader("💰 Total Spend by Category")
-    spend_cat = df_filtered.groupby("category")["spend"].sum().reset_index().sort_values("spend", ascending=False)
-    fig_cat = px.bar(
-        spend_cat,
-        x="category",
-        y="spend",
-        text_auto=True,
-        title="💰 Total Spend by Category"
-    )
-    fig_cat.update_layout(xaxis_title="Category", yaxis_title="Total Spend")
-    st.plotly_chart(fig_cat, use_container_width=True)
-
-# ==========================================================
-# 📈 Spend by Age
-# ==========================================================
-if df_filtered["age"].notnull().any():
-    st.subheader("📈 Spend by Age")
-    spend_age = df_filtered.groupby("age")["spend"].sum().reset_index()
-    fig_age = px.line(
-        spend_age,
-        x="age",
-        y="spend",
-        markers=True,
-        title="📈 Spend by Age"
-    )
-    fig_age.update_layout(xaxis_title="Age", yaxis_title="Total Spend")
     st.plotly_chart(fig_age, use_container_width=True)
 
-# ==========================================================
-# 🏆 Top 10 Spending Customers (Fixed)
-# ==========================================================
-st.subheader("🏆 Top 10 Spending Customers")
-
-# Handle missing name columns safely
-name_cols = [col for col in ["first_name", "last_name"] if col in df_filtered.columns]
-
-# Group by existing columns
-group_cols = ["customer_id"] + name_cols
-
-top_customers = (
-    df_filtered.groupby(group_cols, as_index=False)["spend"]
-    .sum()
-    .sort_values("spend", ascending=False)
-    .head(10)
-)
-
-# Create readable display name
-if "first_name" in df_filtered.columns or "last_name" in df_filtered.columns:
-    top_customers["customer_name"] = (
-        top_customers.get("first_name", "") + " " + top_customers.get("last_name", "")
-    ).str.strip()
-    top_customers["customer_name"] = top_customers["customer_name"].replace("", "Unknown Customer")
-else:
-    top_customers["customer_name"] = top_customers["customer_id"].astype(str)
-
-# Plot bar chart
-fig_top10 = px.bar(
-    top_customers,
-    x="customer_name",
-    y="spend",
-    text_auto=".2s",
-    title="🏆 Top 10 Customers by Spend (Filtered View)",
-    color="spend",
-    color_continuous_scale="Blues"
-)
-fig_top10.update_layout(
-    xaxis_title="Customer",
-    yaxis_title="Total Spend",
-    xaxis_tickangle=-45,
-    title_x=0.25
-)
-st.plotly_chart(fig_top10, use_container_width=True)
-
-with st.expander("📋 View Top 10 Customer Details"):
-    display_cols = ["customer_id", "spend", "city", "gender", "occupation"]
-    existing_cols = [c for c in display_cols if c in df_filtered.columns]
-    st.dataframe(
-        df_filtered[df_filtered["customer_id"].isin(top_customers["customer_id"])][existing_cols]
-        .sort_values("spend", ascending=False)
+elif page == " Spend by Marital Status":
+    st.subheader("Spend by Marital Status across City, Occupation & Category")
+    marital_summary = df.groupby(["city", "occupation", "category", "marital_status"])["spend_inr"].sum().reset_index()
+    fig_marital = px.bar(
+        marital_summary,
+        x="city",
+        y="spend_inr",
+        color="marital_status",
+        barmode="group",
+        facet_col="occupation",
+        facet_col_wrap=2,
+        title="Spend by Marital Status (INR) across City, Occupation & Category"
     )
+    st.plotly_chart(fig_marital, use_container_width=True)
 
-# ==========================================================
+elif page == "💳 Transactions by Payment Type":
+    st.subheader("💳 Transactions by Payment Type, City, Occupation & Category")
+    if "payment_type" in df.columns:
+        tx = df.groupby(["city", "occupation", "category", "payment_type"]).size().reset_index(name="transaction_count")
+        fig_tx = px.bar(
+            tx,
+            x="occupation",
+            y="transaction_count",
+            color="payment_type",
+            barmode="group",
+            facet_col="city",
+            facet_col_wrap=2,
+            title="Transactions by Payment Type across City, Occupation & Category"
+        )
+        st.plotly_chart(fig_tx, use_container_width=True)
+
+elif page == "💼 Total Spend by Occupation":
+    st.subheader("💼 Total Spend by Occupation")
+    occ = df.groupby("occupation")["spend_inr"].sum().reset_index()
+    fig_occ = px.bar(occ, x="occupation", y="spend_inr", text_auto=True, title="Total Spend by Occupation (INR)")
+    st.plotly_chart(fig_occ, use_container_width=True)
+
+elif page == "🏷️ Total Spend by Category":
+    st.subheader("🏷️ Total Spend by Category")
+    if "category" in df.columns:
+        cat_spend = df.groupby("category")["spend_inr"].sum().reset_index().sort_values("spend_inr", ascending=False)
+        fig_category = px.bar(cat_spend, x="category", y="spend_inr", text_auto=True, color="spend_inr", title="Total Spend by Category (INR)")
+        st.plotly_chart(fig_category, use_container_width=True)
+
+elif page == "🏆 Top 10 Spending Customers":
+    st.subheader("🏆 Top 10 Spending Customers")
+    name_cols = [col for col in ["first_name", "last_name"] if col in df.columns]
+    group_cols = ["customer_id"] + name_cols
+    top10 = df.groupby(group_cols)["spend_inr"].sum().reset_index().sort_values("spend_inr", ascending=False).head(10)
+    if "first_name" in df.columns:
+        top10["name"] = top10["first_name"].fillna("") + " " + top10.get("last_name", "")
+    else:
+        top10["name"] = top10["customer_id"].astype(str)
+    fig_top10 = px.bar(top10, x="name", y="spend_inr", text_auto=True, title="Top 10 Customers by Spend (INR)", color="spend_inr")
+    st.plotly_chart(fig_top10, use_container_width=True)
+
+# ================================================================
 # 🧾 Footer
-# ==========================================================
+# ================================================================
 st.markdown("---")
-st.markdown(
-    "<p style='text-align:center; color:gray;'>👨‍💻 Created by Data Team | Zenith Bank © 2025</p>",
-    unsafe_allow_html=True
-)
+st.markdown("<p style='text-align:center; color:gray;'>👨‍💻 Zenith Bank Analytics Dashboard © 2025</p>", unsafe_allow_html=True)
