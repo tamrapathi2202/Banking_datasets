@@ -10,9 +10,9 @@ import plotly.express as px
 st.set_page_config(page_title="Zenith Bank Dashboard", layout="wide")
 st.title("🏦 Zenith Bank Dashboard")
 st.markdown("### Customer Spend & Transaction Insights")
-#
+
 # ================================================================
-# 🗂 Page Navigation on Main Page
+# 🗂 Page Navigation
 # ================================================================
 st.markdown("---")
 page = st.radio("Select Page", [
@@ -49,7 +49,7 @@ def load_data():
         .str.replace(r"[^a-z0-9_]", "", regex=True)
     )
 
-    # Merge on customer_id
+    # Merge
     df = pd.merge(spends, customers, on="customer_id", how="left")
 
     # Fix marital_status column
@@ -58,7 +58,7 @@ def load_data():
             df.rename(columns={col: "marital_status"}, inplace=True)
             break
 
-    # Handle DOB → Age
+    # Convert DOB to Age
     if "dob" in df.columns:
         df["dob"] = pd.to_datetime(df["dob"], errors="coerce")
         today = pd.to_datetime(datetime.now().date())
@@ -71,12 +71,12 @@ def load_data():
 
     df["age"] = pd.to_numeric(df["age"], errors="coerce")
 
-    # Create consistent Age Groups
-    bins = [0, 20, 24, 34, 44, 54, 64, 100]
+    # Create age groups
+    bins = [0, 20, 24, 34, 44, 54, 64, 120]
     labels = ["<20", "21-24", "25-34", "35-44", "45-54", "55-64", "65+"]
     df["age_group"] = pd.cut(df["age"], bins=bins, labels=labels, right=True)
 
-    # Ensure spend is numeric
+    # Ensure spend numeric
     df["spend"] = pd.to_numeric(df["spend"], errors="coerce").fillna(0)
 
     return df
@@ -104,12 +104,8 @@ if "category" in df.columns:
     df = df[df["category"].isin(selected_categories)]
 
 if df["age"].notnull().any():
-    data_min_age = int(max(0, np.floor(df["age"].dropna().min())))
-    data_max_age = int(min(120, np.ceil(df["age"].dropna().max())))
-    if data_min_age == data_max_age:
-        data_min_age = max(0, data_min_age - 5)
-        data_max_age = data_max_age + 5
-    selected_age = st.sidebar.slider("Select Age Range", data_min_age, data_max_age, (data_min_age, data_max_age))
+    min_age, max_age = int(df["age"].min()), int(df["age"].max())
+    selected_age = st.sidebar.slider("Select Age Range", min_age, max_age, (min_age, max_age))
     df = df[df["age"].between(selected_age[0], selected_age[1])]
 
 # ================================================================
@@ -119,46 +115,55 @@ USD_TO_INR = 83
 df["spend_inr"] = df["spend"] * USD_TO_INR
 
 # ================================================================
-# 📊 Display Pages Based on Selection
+# 📊 Display Pages
 # ================================================================
 if page == "📊 KPIs":
     st.subheader("📈 Key Performance Indicators")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Spend", f"₹{df['spend_inr'].sum():,.2f}")
-    col2.metric("Unique Customers", df["customer_id"].nunique())
-    col3.metric("Total Transactions", df.shape[0])
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Spend", f"₹{df['spend_inr'].sum():,.2f}")
+    c2.metric("Unique Customers", df["customer_id"].nunique())
+    c3.metric("Total Transactions", df.shape[0])
 
 elif page == "🧍 Spend by Gender":
-    st.subheader("🧍 Spend Distribution by Gender")
+    st.subheader("🧍 Spend by Gender")
     if "gender" in df.columns:
-        gdf = df.groupby("gender")["spend_inr"].sum().reset_index()
-        fig_gender = px.pie(gdf, names="gender", values="spend_inr", hole=0.4, title="Spend by Gender (INR)")
-        st.plotly_chart(fig_gender, use_container_width=True)
+        g = df.groupby("gender")["spend_inr"].sum().reset_index()
+        fig = px.pie(g, names="gender", values="spend_inr", hole=0.4, title="Spend by Gender (INR)")
+        st.plotly_chart(fig, use_container_width=True)
 
 elif page == "👥 Spend by Age Group":
-    st.subheader("👥Spend by Age Group")
-    
-    # ✅ Ensure all age groups appear even if spend = 0
+    st.subheader("👥 Spend by Age Group")
+
     all_age_groups = ["<20", "21-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+
+    # Group and ensure all age groups appear
     age_summary = df.groupby(
-        ["city", "occupation", "category", "marital_status", "age_group"]
+        ["city", "occupation", "category", "marital_status", "age_group"], dropna=False
     )["spend_inr"].sum().reset_index()
 
-    # Fill missing age groups per combination
+    # Create all combinations for missing age groups
     full_index = pd.MultiIndex.from_product(
-        [df["city"].unique(),
-         df["occupation"].unique(),
-         df["category"].unique(),
-         df["marital_status"].unique(),
-         all_age_groups],
-        names=["city", "occupation", "category", "marital_status", "age_group"]
+        [
+            df["city"].dropna().unique(),
+            df["occupation"].dropna().unique(),
+            df["category"].dropna().unique(),
+            df["marital_status"].dropna().unique(),
+            all_age_groups,
+        ],
+        names=["city", "occupation", "category", "marital_status", "age_group"],
     )
-    age_summary = age_summary.set_index(
-        ["city", "occupation", "category", "marital_status", "age_group"]
-    ).reindex(full_index, fill_value=0).reset_index()
+    full_age_summary = (
+        pd.DataFrame(index=full_index)
+        .reset_index()
+        .merge(age_summary, on=["city", "occupation", "category", "marital_status", "age_group"], how="left")
+    )
 
+    full_age_summary["spend_inr"] = full_age_summary["spend_inr"].fillna(0)
+    full_age_summary["age_group"] = pd.Categorical(full_age_summary["age_group"], categories=all_age_groups, ordered=True)
+
+    # Plot
     fig_age = px.bar(
-        age_summary,
+        full_age_summary,
         x="city",
         y="spend_inr",
         color="age_group",
@@ -171,48 +176,29 @@ elif page == "👥 Spend by Age Group":
     st.plotly_chart(fig_age, use_container_width=True)
 
 elif page == "💍 Spend by Marital Status":
-    st.subheader("💍Spend by Marital Status across City, Occupation & Category")
-    marital_summary = df.groupby(["city", "occupation", "category", "marital_status"])["spend_inr"].sum().reset_index()
-    fig_marital = px.bar(
-        marital_summary,
-        x="city",
-        y="spend_inr",
-        color="marital_status",
-        barmode="group",
-        facet_col="occupation",
-        facet_col_wrap=2,
-        title="Spend by Marital Status (INR) across City, Occupation & Category"
-    )
-    st.plotly_chart(fig_marital, use_container_width=True)
+    st.subheader("💍 Spend by Marital Status")
+    m = df.groupby(["city", "occupation", "category", "marital_status"])["spend_inr"].sum().reset_index()
+    fig = px.bar(m, x="city", y="spend_inr", color="marital_status", barmode="group", facet_col="occupation", facet_col_wrap=2)
+    st.plotly_chart(fig, use_container_width=True)
 
 elif page == "💳 Transactions by Payment Type":
-    st.subheader("💳 Transactions by Payment Type, City, Occupation & Category")
+    st.subheader("💳 Transactions by Payment Type")
     if "payment_type" in df.columns:
         tx = df.groupby(["city", "occupation", "category", "payment_type"]).size().reset_index(name="transaction_count")
-        fig_tx = px.bar(
-            tx,
-            x="occupation",
-            y="transaction_count",
-            color="payment_type",
-            barmode="group",
-            facet_col="city",
-            facet_col_wrap=2,
-            title="Transactions by Payment Type across City, Occupation & Category"
-        )
-        st.plotly_chart(fig_tx, use_container_width=True)
+        fig = px.bar(tx, x="occupation", y="transaction_count", color="payment_type", barmode="group", facet_col="city", facet_col_wrap=2)
+        st.plotly_chart(fig, use_container_width=True)
 
 elif page == "💼 Total Spend by Occupation":
     st.subheader("💼 Total Spend by Occupation")
-    occ = df.groupby("occupation")["spend_inr"].sum().reset_index()
-    fig_occ = px.bar(occ, x="occupation", y="spend_inr", text_auto=True, title="Total Spend by Occupation (INR)")
-    st.plotly_chart(fig_occ, use_container_width=True)
+    o = df.groupby("occupation")["spend_inr"].sum().reset_index()
+    fig = px.bar(o, x="occupation", y="spend_inr", text_auto=True, title="Total Spend by Occupation (INR)")
+    st.plotly_chart(fig, use_container_width=True)
 
 elif page == "🏷️ Total Spend by Category":
     st.subheader("🏷️ Total Spend by Category")
-    if "category" in df.columns:
-        cat_spend = df.groupby("category")["spend_inr"].sum().reset_index().sort_values("spend_inr", ascending=False)
-        fig_category = px.bar(cat_spend, x="category", y="spend_inr", text_auto=True, color="spend_inr", title="Total Spend by Category (INR)")
-        st.plotly_chart(fig_category, use_container_width=True)
+    c = df.groupby("category")["spend_inr"].sum().reset_index().sort_values("spend_inr", ascending=False)
+    fig = px.bar(c, x="category", y="spend_inr", text_auto=True, color="spend_inr", title="Total Spend by Category (INR)")
+    st.plotly_chart(fig, use_container_width=True)
 
 elif page == "🏆 Top 10 Spending Customers":
     st.subheader("🏆 Top 10 Spending Customers")
@@ -223,8 +209,8 @@ elif page == "🏆 Top 10 Spending Customers":
         top10["name"] = top10["first_name"].fillna("") + " " + top10.get("last_name", "")
     else:
         top10["name"] = top10["customer_id"].astype(str)
-    fig_top10 = px.bar(top10, x="name", y="spend_inr", text_auto=True, title="Top 10 Customers by Spend (INR)", color="spend_inr")
-    st.plotly_chart(fig_top10, use_container_width=True)
+    fig = px.bar(top10, x="name", y="spend_inr", text_auto=True, color="spend_inr", title="Top 10 Customers by Spend (INR)")
+    st.plotly_chart(fig, use_container_width=True)
 
 # ================================================================
 # 🧾 Footer
