@@ -102,7 +102,7 @@ if "category" in df.columns:
     selected_categories = st.sidebar.multiselect("Select Category", categories, default=categories)
     df = df[df["category"].isin(selected_categories)]
 
-# ✅ Age Filter (Changed range to 22–70)
+# ✅ Age Filter (Range set to 22–70)
 if df["age"].notnull().any():
     min_age, max_age = 22, 70
     selected_age = st.sidebar.slider("Select Age Range", min_age, max_age, (min_age, max_age))
@@ -146,7 +146,8 @@ elif page == "👥 Spend by Age Group":
     )
     st.plotly_chart(fig_age, use_container_width=True)
 
-elif page == " 💍Spend by Marital Status":
+# ✅ FIXED condition here (removed extra space)
+elif page == "💍 Spend by Marital Status":
     st.subheader("💍Spend by Marital Status across City, Occupation & Category")
     marital_summary = df.groupby(["city", "occupation", "category", "marital_status"])["spend_inr"].sum().reset_index()
     fig_marital = px.bar(
