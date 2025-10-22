@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import datetime
 import plotly.express as px
 
@@ -60,12 +61,18 @@ def load_data():
     # Handle DOB → Age
     if "dob" in df.columns:
         df["dob"] = pd.to_datetime(df["dob"], errors="coerce")
-        df["age"] = datetime.now().year - df["dob"].dt.year
+        # compute age robustly (use year difference, adjust if birthday hasn't happened yet this year)
+        today = pd.to_datetime(datetime.now().date())
+        df["age"] = (today - df["dob"]).dt.days // 365
     elif "age_group" in df.columns:
         mapping = {"21-24": 22, "25-34": 29, "35-44": 39, "45+": 50}
         df["age"] = df["age_group"].map(mapping)
     elif "age" not in df.columns:
-        df["age"] = None
+        # Use NaN instead of None so numeric ops work
+        df["age"] = np.nan
+
+    # Ensure age is numeric (coerce bad values to NaN)
+    df["age"] = pd.to_numeric(df["age"], errors="coerce")
 
     # Create Age Groups
     bins = [0, 20, 24, 34, 44, 54, 64, 100]
@@ -102,10 +109,16 @@ if "category" in df.columns:
     selected_categories = st.sidebar.multiselect("Select Category", categories, default=categories)
     df = df[df["category"].isin(selected_categories)]
 
-# ✅ Age Filter (Range set to 22–70)
+# ✅ Age Filter (dynamic based on data so all age-groups are possible)
 if df["age"].notnull().any():
-    min_age, max_age = 22, 70
-    selected_age = st.sidebar.slider("Select Age Range", min_age, max_age, (min_age, max_age))
+    # compute realistic slider bounds from data
+    data_min_age = int(max(0, np.floor(df["age"].dropna().min())))
+    data_max_age = int(min(120, np.ceil(df["age"].dropna().max())))
+    # provide a sane fallback if somehow min==max
+    if data_min_age == data_max_age:
+        data_min_age = max(0, data_min_age - 5)
+        data_max_age = data_max_age + 5
+    selected_age = st.sidebar.slider("Select Age Range", data_min_age, data_max_age, (data_min_age, data_max_age))
     df = df[df["age"].between(selected_age[0], selected_age[1])]
 
 # ================================================================
