@@ -17,8 +17,8 @@ st.markdown("---")
 page = st.radio("Select Page", [
     "📊 KPIs",
     "🧍 Spend by Gender",
-    " Spend by Age Group",
-    " Spend by Marital Status",
+    "👥 Spend by Age Group",
+    "💍 Spend by Marital Status",
     "💳 Transactions by Payment Type",
     "💼 Total Spend by Occupation",
     "🏷️ Total Spend by Category",
@@ -102,9 +102,9 @@ if "category" in df.columns:
     selected_categories = st.sidebar.multiselect("Select Category", categories, default=categories)
     df = df[df["category"].isin(selected_categories)]
 
-# Age Filter
+# ✅ Age Filter (Changed range to 22–70)
 if df["age"].notnull().any():
-    min_age, max_age = int(df["age"].min()), int(df["age"].max())
+    min_age, max_age = 22, 70
     selected_age = st.sidebar.slider("Select Age Range", min_age, max_age, (min_age, max_age))
     df = df[df["age"].between(selected_age[0], selected_age[1])]
 
@@ -131,8 +131,8 @@ elif page == "🧍 Spend by Gender":
         fig_gender = px.pie(gdf, names="gender", values="spend_inr", hole=0.4, title="Spend by Gender (INR)")
         st.plotly_chart(fig_gender, use_container_width=True)
 
-elif page == " Spend by Age Group":
-    st.subheader("Spend by Age Group")
+elif page == "👥 Spend by Age Group":
+    st.subheader("👥Spend by Age Group")
     age_summary = df.groupby(["city", "occupation", "category", "marital_status", "age_group"])["spend_inr"].sum().reset_index()
     fig_age = px.bar(
         age_summary,
@@ -146,8 +146,8 @@ elif page == " Spend by Age Group":
     )
     st.plotly_chart(fig_age, use_container_width=True)
 
-elif page == " Spend by Marital Status":
-    st.subheader("Spend by Marital Status across City, Occupation & Category")
+elif page == " 💍Spend by Marital Status":
+    st.subheader("💍Spend by Marital Status across City, Occupation & Category")
     marital_summary = df.groupby(["city", "occupation", "category", "marital_status"])["spend_inr"].sum().reset_index()
     fig_marital = px.bar(
         marital_summary,
