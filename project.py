@@ -61,25 +61,22 @@ def load_data():
     # Handle DOB → Age
     if "dob" in df.columns:
         df["dob"] = pd.to_datetime(df["dob"], errors="coerce")
-        # compute age robustly (use year difference, adjust if birthday hasn't happened yet this year)
         today = pd.to_datetime(datetime.now().date())
         df["age"] = (today - df["dob"]).dt.days // 365
     elif "age_group" in df.columns:
         mapping = {"21-24": 22, "25-34": 29, "35-44": 39, "45+": 50}
         df["age"] = df["age_group"].map(mapping)
     elif "age" not in df.columns:
-        # Use NaN instead of None so numeric ops work
         df["age"] = np.nan
 
-    # Ensure age is numeric (coerce bad values to NaN)
     df["age"] = pd.to_numeric(df["age"], errors="coerce")
 
-    # Create Age Groups
+    # Create consistent Age Groups
     bins = [0, 20, 24, 34, 44, 54, 64, 100]
     labels = ["<20", "21-24", "25-34", "35-44", "45-54", "55-64", "65+"]
     df["age_group"] = pd.cut(df["age"], bins=bins, labels=labels, right=True)
 
-    # Ensure 'spend' is numeric
+    # Ensure spend is numeric
     df["spend"] = pd.to_numeric(df["spend"], errors="coerce").fillna(0)
 
     return df
@@ -91,30 +88,24 @@ df = load_data()
 # ================================================================
 st.sidebar.header("🔍 Filters")
 
-# City Filter
 if "city" in df.columns:
     cities = sorted(df["city"].dropna().unique())
     selected_cities = st.sidebar.multiselect("Select City", cities, default=cities)
     df = df[df["city"].isin(selected_cities)]
 
-# Occupation Filter
 if "occupation" in df.columns:
     occupations = sorted(df["occupation"].dropna().unique())
     selected_occupations = st.sidebar.multiselect("Select Occupation", occupations, default=occupations)
     df = df[df["occupation"].isin(selected_occupations)]
 
-# Category Filter
 if "category" in df.columns:
     categories = sorted(df["category"].dropna().unique())
     selected_categories = st.sidebar.multiselect("Select Category", categories, default=categories)
     df = df[df["category"].isin(selected_categories)]
 
-# ✅ Age Filter (dynamic based on data so all age-groups are possible)
 if df["age"].notnull().any():
-    # compute realistic slider bounds from data
     data_min_age = int(max(0, np.floor(df["age"].dropna().min())))
     data_max_age = int(min(120, np.ceil(df["age"].dropna().max())))
-    # provide a sane fallback if somehow min==max
     if data_min_age == data_max_age:
         data_min_age = max(0, data_min_age - 5)
         data_max_age = data_max_age + 5
@@ -124,7 +115,7 @@ if df["age"].notnull().any():
 # ================================================================
 # 💰 Currency Conversion USD → INR
 # ================================================================
-USD_TO_INR = 83  # Conversion rate
+USD_TO_INR = 83
 df["spend_inr"] = df["spend"] * USD_TO_INR
 
 # ================================================================
@@ -146,7 +137,26 @@ elif page == "🧍 Spend by Gender":
 
 elif page == "👥 Spend by Age Group":
     st.subheader("👥Spend by Age Group")
-    age_summary = df.groupby(["city", "occupation", "category", "marital_status", "age_group"])["spend_inr"].sum().reset_index()
+    
+    # ✅ Ensure all age groups appear even if spend = 0
+    all_age_groups = ["<20", "21-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+    age_summary = df.groupby(
+        ["city", "occupation", "category", "marital_status", "age_group"]
+    )["spend_inr"].sum().reset_index()
+
+    # Fill missing age groups per combination
+    full_index = pd.MultiIndex.from_product(
+        [df["city"].unique(),
+         df["occupation"].unique(),
+         df["category"].unique(),
+         df["marital_status"].unique(),
+         all_age_groups],
+        names=["city", "occupation", "category", "marital_status", "age_group"]
+    )
+    age_summary = age_summary.set_index(
+        ["city", "occupation", "category", "marital_status", "age_group"]
+    ).reindex(full_index, fill_value=0).reset_index()
+
     fig_age = px.bar(
         age_summary,
         x="city",
@@ -155,11 +165,11 @@ elif page == "👥 Spend by Age Group":
         barmode="group",
         facet_col="occupation",
         facet_col_wrap=2,
+        category_orders={"age_group": all_age_groups},
         title="Spend by Age Group (INR) across City, Occupation, Category & Marital Status"
     )
     st.plotly_chart(fig_age, use_container_width=True)
 
-# ✅ FIXED condition here (removed extra space)
 elif page == "💍 Spend by Marital Status":
     st.subheader("💍Spend by Marital Status across City, Occupation & Category")
     marital_summary = df.groupby(["city", "occupation", "category", "marital_status"])["spend_inr"].sum().reset_index()
